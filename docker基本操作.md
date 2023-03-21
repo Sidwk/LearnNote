@@ -69,9 +69,9 @@ root@96e7476490a8:/#
 
 其中，`-i`是让它以交互模式启动，后面的`relaxed_elbakyan`是容器的名称。
 
-### 进入在后台运行的容器之中
+### 在交换机中进入后台运行的容器
 
-有两种方法进入容器使用 `docker attach` 命令或 `docker exec` 命令，，推荐大家使用 `docker exec` 命令。
+在交换机的界面下有两种方法进入容器使用 `docker attach` 命令或 `docker exec` 命令，，推荐大家使用 `docker exec` 命令。
 
 使用`docker attach` 命令时
 
@@ -90,3 +90,31 @@ root@96e7476490a8:/#
 ```
 
 在`docker exec` 命令进入容器的情况下，使用`exit`命令不会导致容器的停止。这就是为什么推荐使用 `docker exec` 的原因。
+
+### 在交换机中终止容器
+
+有两种命令进行终止容器，第一个为`docker stop`，另一个是`docker kill`
+
+`docker stop`允许容器保存当前数据，然后进行终止
+
+```shell
+admin@SW1:~$ docker stop relaxed_elbakyan 
+relaxed_elbakyan
+```
+
+`docker kill`则是直接终止掉容器
+
+```shell
+admin@SW1:~$ docker kill relaxed_elbakyan 
+relaxed_elbakyan
+```
+
+### 删除容器
+
+使用`docker rm`命令可以将容器进行删除操作，因为docker里面的容器都是很轻量级的，所以可以每次使用都新创建一个容器。当然也可以基于一个镜像建立多个相同的容器。
+
+```shell
+admin@SW1:~$ docker rm relaxed_elbakyan 
+relaxed_elbakyan
+```
+
