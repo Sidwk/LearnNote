@@ -118,3 +118,27 @@ admin@SW1:~$ docker rm relaxed_elbakyan
 relaxed_elbakyan
 ```
 
+### 容器联网与自定义名字
+
+联网：现在还无法解决容器挂在在`docker0`上联网的问题，不过可以使用`docker run`命令创建容器时加`--net host`参数，让容器的网卡与宿主机的网卡配置一般（也就是交换机的网路配置），这种方式来让容器上网。
+
+```shell
+admin@SW1:~$ docker run --net host -i -t asternos/bfnstratum:latest bash
+root@SW1:/#
+```
+
+自定义命名：可以在使用`docker run`命令创建容器时加`--name 自定义的名字`参数来进行自定义容器的名字。
+
+```shell
+admin@SW1:~$ docker run --name 自定义的名字 -i -t asternos/bfnstratum:latest bash
+root@96e7476490a8:/# 
+```
+
+举一个例子，如下所示：
+
+```shell
+admin@SW1:~$ docker run -it --privileged=true --name stratum  --net host asternos/bfnstratum:latest /bin/bash
+root@SW1:/# 这里就是进入了容器里面
+```
+
+在这里就是创建了一个私有的，名字叫做`stratum`的，网卡信息与交换机网卡信息一致的，基于`asternos/bfnstratum`镜像的容器，并且直接进入其`bash`界面。
