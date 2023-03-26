@@ -1,162 +1,471 @@
-# SONIC
 
-## 简介
 
-**官方解释：**sonic是一个**基于 Linux 的开源网络操作系统**，运行在来自多个供应商和 ASIC 的交换机上。**SONiC 提供全套网络功能**，如 BGP 和 RDMA。与ONL一样，SONiC需要通过ONIE环境安装系统到磁盘或者flash分区中。
+# sonic安装步骤
 
-SONIC的一些功能已在一些最大的云服务提供商的数据中心进行了生产强化。它为团队提供了创建所需网络解决方案的灵活性，同时利用大型生态系统和社区的集体力量。
+他的官方安装的链接地址在这里：https://github.com/sonic-net/SONiC/wiki/SONiC-P4-Software-Switch
+
+记得先下载下来他的`SONiC-P4.Test.tar.gz`，然后传进虚拟机，解压缩之后，可以看见五个`.sh`文件和两个文件夹，之后进行下面文档的步骤。
 
 ------
 
-**网上的解释：**SONiC是**构建网络设备（如交换机）所需功能的软件集合**。它可以通过交换机换抽象接口（SAI）运行在不同的ASIC平台。
+### 安装docker与ovs
 
-<img src="https://img-blog.csdnimg.cn/6250d92e1453460cadc0c03446e1f9b4.png" alt="img" style="zoom:67%;" />
+**推荐使用ubuntu20.04或者是ubuntu14.04，不要使用ubuntu22.04（怎么装都老是出错）**
 
-**SAI**向上给SONiC提供了一套统一的API接口，向下则对接不同的ASIC。
+本来安装`docker`和`ovs`都是他给的文件`install_docker_ovs.sh`里的步骤，但是因为网络的问题，会卡在`apt.dockerproject.org`的联通问题上，就会造成一直的无法安装，所以进行了手动的对这两个进行安装。
 
-SONiC是一个将传统交换机操作系统软件分解成多个**容器化组件**的创新方案，这使得增加新的组件和功能变得非常方便。
+------
 
-SONiC大量使用了现有的**开源**项目和开源技术，如Docker，Redis，Quagga和LLDPD 以及自动化配置工具Ansible、Puppet和Chef等。
+#### 安装docker
 
-SONiC只是**构建交换机网络功能的软件集合**，**它需要运行在Base OS上**。SONiC所使用的Base OS 是ONL (Open Network Linux ) 。ONL是一款为白盒交换机而设计的开源Linux操作系统，ONL中包括了许多硬件（温度传感器、风扇、电源、CPLD控制器等）的驱动程序。
+首先对apt进行缓存更新
 
-将SONiC和Base OS、SAI、ASIC平台对应的驱动打包制作成为一个文件，这个文件才是可直接安装到白盒交换机的**NOS镜像** 。
+```shell
+$ sudo apt-get update
+```
 
-**SONiC与传统网络的区别**，如下图所示，左侧代表SONiC，右侧为传统网络架构，LAG App，BGP App等都属于控制层，生成控制面的表项，SAI，ASIC Control Software相当于软转发层面，用来将控制面的数据转化为ASIC的数据，然后下发驱动。硬件转发层包含SDK和硬件。
+之后安装一些支持
 
-<img src="https://img-blog.csdnimg.cn/6b4244a848024050a7608b433a66d573.png" alt="img" style="zoom: 67%;" />
+```shell
+$ sudo apt-get install \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+```
 
-**总结来说，SONIC就是一个开源的linux网络操作系统，它能提供的功能使用docker分成多个容器，一个功能对应一个docker容器，可进行灵活的拆卸。然后下层使用SAI充当软硬件的中间对接层，用来实现其标准化。再向下就是到Base OS根据具体的交换机提供相应的驱动程序。在向下最后就是最底层的硬件。**
+**替换安装源**
 
+因为国内的网络问题会造成一直的无法连接网络的情况，建议替换软件源。一般可以替换阿里云的或者是清华的源，我这里用的是阿里云的源。
 
+首先需要添加软件源的`GPG`
 
-## SONIC系统架构
+```shell
+$ curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+```
 
-SONIC系统按功能将整个系统划分成多个模块，每个模块是一个独立的docker容器，一个docker由多个进程共同完成这个模块的功能。在SONIC中使用`show services`命令查看每个docker及其进程状态。
+之后向`sources.list` 中添加 Docker 软件源
 
-这个结构依赖于**`redis-database`**引擎的使用：即一个键-值数据库。它提供一个独立于语言的接口，一个用于所有SONiC子系统之间的数据持久性、复制和多进程通信的方法。
+```shell
+$ echo \
+  "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.aliyun.com/docker-ce/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+```
 
-通过依赖`redis-database`基础架构提供的`publisher/subscriber` 的消息传递模式，应用程序可以仅订阅它们需要的数据视图，并避免与其功能无关的实现细节。
+**安装docker**
 
-SONiC将每个模块放置在独立的docker容器中，以保持组件之间的高内聚性，同时减少不相连组件之间的耦合。这些组件中的每一个都被编写为完全独立于与较低层抽象交互所需的特定于平台的细节。
+首先更新apt，然后安装`docker-ce`
 
-截至当前主要有以下**docker容器（不重要，下面会说）**
+```shell
+$ sudo apt-get update
+$ sudo apt-get install docker-ce docker-ce-cli containerd.io
+```
 
-- Teamd：运行并实现链路聚合（LAG）功能。
-- Pmon：记录硬件传感器读数并发出警报。
-- Snmp：实现SNMP功能。
-- Dhcp-relay：将DHCP请求从没有DHCP服务器的子网中连接到其他子网上的一台或多台DHCP服务器。
-- Lldp：实现链路层发现协议功能。建立lLLDP连接。
-- Bgp：运行支持的路由协议之一，例如ospf，isis，ldp，bgp等。
-- Database：redis-engine托管的主要数据库。
-- Swss：实现所有SONiC模块之间进行有效通信和与SONiC应用层之间的交互。监听并推送各个组件的状态。
-- Syncd：实现交换机网络状态和实际硬件进行同步
+**（或者使用脚本自动进行一键安装操作）**
 
-下图显示了每个 docker-container 中包含的功能的高级视图，以及这些容器之间如何交互。请注意，并非所有 SONiC 应用程序都与其他 SONiC 组件交互，因为其中一些应用程序从外部实体收集它们的状态。使用蓝色箭头表示与集中式 redis 引擎的交互，使用黑色箭头表示所有其他引擎（netlink、/sys 文件系统等）。
+```shell
+$ curl -fsSL get.docker.com -o get-docker.sh
+$ sudo sh get-docker.sh --mirror Aliyun
+```
 
-尽管 SONiC 的大部分主要组件都包含在 docker 容器中，但在 linux 主机系统本身中也有一些关键模块。SONiC 的配置模块 (sonic-cfggen) 和 SONiC 的 CLI 就是这种情况。
+**试着启动docker**
 
-<img src="https://github.com/Azure/SONiC/raw/master/images/sonic_user_guide_images/section4_images/section4_pic1_high_level.png" alt="Sec4Img1" style="zoom: 80%;" />
+```shell
+$ sudo systemctl enable docker
+$ sudo systemctl start docker
+```
 
-## SONIC各模块功能的说明
+**建立docker用户组（可选）**
 
-### Teamd container（一种数据链路的协议的应用）
+一般情况下Docker只有`root`用户和`docker`组用户可以访问Docker的引擎`Unix socket`。所以可以添加`docker`用户组来进行访问。或者说就只使用`root`用户进行访问操作（我是这种，因为可以少去`sudo`命令）
 
-在 SONiC 设备中运行链路聚合功能 (LAG:Link Aggregation functionality)。“teamd”是 LAG 协议的基于 linux 的开源实现。“teamsyncd”进程允许“teamd”和南向子系统之间的交互。
+建立`docker`组
 
-**ps:** LAG：链路聚合是在两个设备间使用多个物理链路创建一个逻辑链路的功能，这种方式允许物理链路间共享负载。交换机网络中使用的一种链路聚合的方法是EtherChannel。EtherChannel可以通过协议PAGP（Port Aggregation Protocol）或**LACP**（Link Aggregation Protocol）来配置。
+```shell
+$ sudo groupadd docker
+```
 
-### **Pmon container**（用于硬件的检测与报警器）
+将当前用户加入 `docker` 组：
 
-负责运行“sensord”，这是一个守护进程，用于定期记录来自硬件组件的传感器读数，并在发出警报时发出警报。Pmon 容器还托管“fancontrol”进程以从相应的平台驱动程序收集与风扇相关的状态。
+```shell
+$ sudo usermod -aG docker $用户
+```
 
-### **Snmp container**（**用来收集网络交换机的状态**）
+退出当前终端并重新登录，进行如下测试。
 
-托管 snmp 功能。此容器中有两个相关进程：
+**测试docker是否安装成功**
 
-- **Snmpd：**负责处理来自外部网络元素的传入 snmp 轮询的实际 snmp 服务器。
-- **Snmp-agent (sonic_ax_impl)：**这是 SONiC 对 AgentX snmp 子代理的实现。该子代理向主代理 (snmpd) 提供从中央 redis 引擎中的 SONiC 数据库收集的信息。
+```shell
+$ docker run --rm hello-world
 
-**ps:** SNMP(Simple Network Management Protocol)：应用层协议，靠UDP进行传输。**常用于对路由器交换机等网络设备的管理**，管理人员通过它来**收集网络设备运行状况，了解网络性能、发现并解决网络问题**。SNMP分为管理端和代理端(agent)，管理端的默认端口为UDP 162，主要用来接收Agent的消息如TRAP告警消息;Agent端使用UDP 161端口接收管理端下发的消息如SET/GET指令等。
+Unable to find image 'hello-world:latest' locally
+latest: Pulling from library/hello-world
+b8dfde127a29: Pull complete
+Digest: sha256:308866a43596e83578c7dfa15e27a73011bdd402185a84c5cd7f32a88b501a24
+Status: Downloaded newer image for hello-world:latest
 
-### **Dhcp-relay container**（将没有DHCP与有DHCP的组子网进行连接）
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
 
-dhcp-relay 代理可以将 DHCP 请求从没有 DHCP 服务器的子网中继到其他子网的一台或多台DHCP服务器。
+To generate this message, Docker took the following steps:
+ 1. The Docker client contacted the Docker daemon.
+ 2. The Docker daemon pulled the "hello-world" image from the Docker Hub.
+    (amd64)
+ 3. The Docker daemon created a new container from that image which runs the
+    executable that produces the output you are currently reading.
+ 4. The Docker daemon streamed that output to the Docker client, which sent it
+    to your terminal.
 
-**ps:** DHCP（Dynamic Host Configuration Protocol）：动态主机配置协议，是一个应用层协议。当我们将客户主机ip地址设置为动态获取方式时，DHCP服务器就会根据DHCP协议给客户端分配IP，使得客户机能够利用这个IP上网。**集中的管理、分配IP地址**，使网络环境中的主机动态的获得IP地址、Gateway地址、DNS服务器地址等信息。工作过程如下图所示。
+To try something more ambitious, you can run an Ubuntu container with:
+ $ docker run -it ubuntu bash
 
-<img src="https://img-blog.csdnimg.cn/119c859e59874b4e936be6dd44ef9d72.png" alt="img" style="zoom: 33%;" />
+Share images, automate workflows, and more with a free Docker ID:
+ https://hub.docker.com/
 
-### **Lldp container**（实现LLDP功能）
+For more examples and ideas, visit:
+ https://docs.docker.com/get-started/
+```
 
-顾名思义，此容器承载 LLDP 功能。这些是在此容器中运行的相关进程：
+当输出以下内容的时候，就说明安装好了。
 
-- **Lldp**：具有 lldp 功能的实际 lldp 守护进程。这是与外部对等方建立 lldp 连接以通告/接收系统功能的过程。
-- **lldp_syncd**：负责将lldp的发现状态上传到中心化系统的消息基础设施（redis-engine）的进程。通过这样做，lldp 状态将被传递给对使用此信息感兴趣的应用程序（例如 snmp）。
-- **Lldpmgr**：进程为 lldp 守护进程提供增量配置功能；它通过在 redis 引擎中订阅 STATE_DB 来实现。有关本主题的详细信息，请参阅下文。
+**ps:** 如果出现这样
 
-**ps:** LLDP（Link Layer Discovery Protocol）：链路层发现协议。设备通过在网络中发送LLDPDU（Data Unit）来通告其他设备自身的状态（理地址，设备标识，接口标识等）。可以使不同厂商的设备在网络中相互发现并**交互各自的系统及配置信息**。 当一个设备从网络中接收到其它设备的这些信息时，它就将这些信息以MIB的形式存储起来。**LLDP只传输，不管理**。
+```shell
+$ docker run --rm hello-world
+docker: Got permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Post "http://%2Fvar%2Frun%2Fdocker.sock/v1.24/containers/create": dial unix /var/run/docker.sock: connect: permission denied.
+See 'docker run --help'.
+```
 
-### BGP container()
+说明上面的用户组出错。可以尝试登录root用户进行试试。
 
-运行支持的路由协议之一，例如**ospf，isis，ldp，bgp**等。
+或者这种情况
 
-**bgpd**：路由的实现。外部的路由状态通过常规的tcp/udp sockets 接收，并通过zebra / fpmsyncd接口下推到转发平面。
+```shell
+$ docker run --rm hello-world
+Unable to find image 'hello-world:latest' locally
+docker: Error response from daemon: Get "https://registry-1.docker.io/v2/library/hello-world/manifests/sha256:faa03e786c97f07ef34423fccceeec2398ec8a5759259f94d99078f264e9d7af": dial tcp 3.216.34.172:443: i/o timeout.
+See 'docker run --help'.
+```
 
-**zebra**：充当传统的IP路由管理。它提供内核路由表的更新，接口的查找和路由的重新分配。将计算出的FIB下推到内核（通过netlink接口）和转发过程中涉及的南向组件（通过Forwarding-Plane-Manager，FPM接口）
+是因为网络问题，再次输入`$ docker run --rm hello-world`进行尝试。
 
-**fpmsyncd**：收集zebra下发的FIB状态，将内容放入redis-engine托管的APPL-DB中。
+docker有一个很全面的介绍网站 https://yeasy.gitbook.io/docker_practice/，基本遇到的问题都能在这里解决。
 
-**ps**：**FIB**（Forward Information dataBase）：转发信息库。路由一般手段：先到**路由缓存**（RouteTable）中查找表项，如果能查找到，就直接将对应的一项作为路由规则；如果查不到，就到FIB中根据规则换算出来，并且增加一项新的，在路由缓存中将项目添加进去。
+------
 
-**ps:** **BGP边界网关协议**（Border Gateway Protocol）是互联网上一个核心的去中心化自治路由协议。它通过维护IP路由表或“前缀”表来实现自治系统（AS）之间的可达性，属于矢量路由协议。BGP不使用传统的内部网关协议（IGP）的指标，而使用基于路径、网络策略或规则集来决定路由。因此，它更适合被称为矢量性协议，而不是路由协议。
+#### **安装ovs**
 
-### **数据库 container**（使用socket可以访问的数据库功能）
+ovs的官网安装指导文档https://docs.openvswitch.org/en/latest/intro/install/general/
 
-托管 redis 数据库引擎。**SONiC 应用程序可以通过 redis-daemon 为此目的公开的 UNIX 套接字访问此引擎中保存的数据库**。这些是 redis 引擎托管的主要数据库：
+**下载与安装步骤**
 
-- **APPL_DB**：存储所有应用程序容器生成的状态——路由、下一跳、邻居等。这是所有希望与其他 SONiC 子系统交互的应用程序的南向入口点。
-- **CONFIG_DB**：存储由 SONiC 应用程序创建的配置状态——端口配置、接口、vlan 等。
-- **STATE_DB**：存储系统中配置的实体的“关键”操作状态。此状态用于解决不同 SONiC 子系统之间的依赖关系。例如，LAG portchannel（由 teamd 子模块定义）可能指的是系统中可能存在或不存在的物理端口。另一个例子是 VLAN 的定义（通过 vlanmgrd 组件），它可能引用在系统中存在未确定的端口成员。本质上，这个数据库存储了所有被认为是解决跨模块依赖关系所必需的状态。
-- **ASIC_DB**：存储必要的状态来驱动 asic 的配置和操作——这里的状态以 asic 友好的格式保存，以简化 syncd（详见下文）和 asic SDK 之间的交互。
-- **COUNTERS_DB**：存储与系统中每个端口关联的计数器/统计信息。此状态可用于满足 CLI 本地请求，或为远程消费提供遥测通道。
+更新`apt`缓存
 
-### **Swss container**（用于SONIC各模块之间进行沟通，由一组工具组成）
+```shell
+$ sudo apt-get update
+```
 
-开关状态服务 (SwSS) 容器由一组工具组成，**允许所有 SONiC 模块之间进行有效通信。**如果说数据库容器擅长提供存储功能，那么 Swss 主要侧重于提供机制来促进各方之间的沟通和仲裁。
+首先安装几个部件，确保后续不会出问题
 
-Swss 还托管负责与 SONiC 应用层进行北向交互的进程。如前所述，例外情况是 fpmsyncd、teamsyncd 和 lldp_syncd 进程，它们分别在 bgp、teamd 和 lldp 容器的上下文中运行。无论这些进程在何种环境下运行（在 swss 容器内部或外部），它们都有相同的目标：提供允许 SONiC 应用程序和 SONiC 的集中式消息基础设施（redis 引擎）之间连接的方法。这些守护进程通常由正在使用的命名约定来标识：*syncd。
+```shell
+$ sudo apt-get install build-essential
+$ sudo apt-get install openssl
+$ sudo apt-get install python
+$ sudo apt-get install python3-pip
+```
 
-https://github.com/sonic-net/SONiC/wiki/Architecture#sonic-subsystems-description
+可以使用`uname -a`，命令查看当前的linux的内核版本
 
-### **Syncd container**（用于同步网络状态和实施的硬件）
+```shell
+$ sudo uname -a
+```
 
-简而言之，**syncd 的容器目标是提供一种机制**，**允许交换机的网络状态与交换机的实际硬件/ASIC 同步**。这包括交换机的 ASIC 当前状态的初始化、配置和收集。
+然后根据自己的内核挑选合适的版本，如果linux内核是5.8+的，那么用ovs-3.0+的就可以。
 
-这些是 syncd 容器中存在的主要逻辑组件：
+![image-20221110153305536](./typora-user-images/image-20221110153305536.png)
 
-- **Syncd：**负责执行上述同步逻辑的进程。在编译时，syncd 链接硬件供应商提供的 ASIC SDK 库，并通过调用为此效果提供的接口将状态注入 ASIC。Syncd 订阅 ASIC_DB 以从 SWSS 参与者接收状态，同时注册为发布者以推送来自硬件的状态。
-- **SAI API：**交换机抽象接口 (SAI) 定义了 API，以提供独立于供应商的方式来控制转发元素，例如以统一方式交换 ASIC、NPU 或软件交换机。有关 SAI API 的更多详细信息，请参阅 [3]。
-- **ASIC SDK：**硬件供应商应提供驱动其 ASIC 所需的 SDK 的 SAI 友好实现。此实现通常以动态链接库的形式提供，它连接到负责驱动其执行的驱动进程（在本例中为 syncd）。
+OVS对应版本的下载的网页在这个位置https://www.openvswitch.org/download/
 
-### **CLI / sonic-cfggen container**（实现CLI功能）
+使用`wegt`下载数据包，或者在网页下载好之后使用`lrzsz`传进来
 
-**负责提供 CLI 功能和系统配置功能**的 SONiC 模块。
+```shell
+$ sudo wegt https://www.openvswitch.org/releases/openvswitch-3.0.0.tar.gz
+```
 
-- **CLI** 组件严重依赖 Python 的 Click 库来为用户提供灵活且可定制的方法来构建命令行工具。
-- **Sonic-cfggen** 组件由 SONiC 的 CLI 调用以执行配置更改或任何需要与 SONiC 模块进行配置相关交互的操作。
+对包进行解压缩，之后`cd`进来
 
-**ps:**CLI（Command-Line Interface）命令行界面。
+```shell
+$ sudo tar -xzf openvswitch-3.0.0.tar.gz
+$ sudo cd openvswitch-3.0.0
+```
 
+查看你当前的内核源码的编译目录
 
+```shell
+$ sudo /lib/modules
+```
 
-## SONIC子系统交互
+根据你的你的内核源码目录进行执行命令
 
-sonic系统里前面的那些模块与state的互动（也就是每个模块与redis-database的互动）就不再赘述，详情可以看官方文档https://github.com/sonic-net/SONiC/wiki/Architecture
+```shell
+$ sudo ./configure --with-linux=/lib/modules/5.15.0-46-generic(你自己对应的目录，我这里的就是5.15.0-46-generic）/build
+```
 
+命令执行过后，执行命令进行安装操作，安装的时间挺长，注意各种错误提示。
 
+```shell
+$ sudo make&&make install
+```
 
+如果在安装的过程中生成了修改了内核模块，那么需要重新编译内核，输入命令
 
+```shell
+$ sudo make modules_install
+```
 
+**OVS部署配置**
 
+需要载入模块，载入`openvswitch`模块到内核中，输入命令
 
+```shell
+$ sudo /sbin/modprobe openvswitch
+$ sudo /sbin/lsmod | grep openvswitch
+```
+
+![image-20221110160013701](./typora-user-images/image-20221110160013701.png)
+
+**PS:**这种情况就是加载进去了。
+
+启动OVS，首先输入下面代码，导入环境变量。然后执行命令`ovs-ctl start`启动
+
+```shell
+$ sudo export PATH=$PATH:/usr/local/share/openvswitch/scripts
+$ sudo ovs-ctl start
+```
+
+当出现下面这种，即成功。
+
+![image-20221110160413020](./typora-user-images/image-20221110160413020.png)
+
+启动ovsdb-server服务，首先执行命令：`export PATH=$PATH:/usr/local/share/openvswitch/scripts`导入环境变量，然后执行命令：`ovs-ctl --no-ovs-vswitchd start`。
+
+```shell
+$ sudo export PATH=$PATH:/usr/local/share/openvswitch/scripts
+$ sudo ovs-ctl --no-ovs-vswitchd start
+```
+
+执行完成后，如下图所示即代表`ovsdb-server`服务启动成功。
+
+![image-20221110160614240](./typora-user-images/image-20221110160614240.png)
+
+建立Open vSwitch配置文件和数据库，并根据ovsdb模板创建ovsdb数据库，用于存储虚拟交换机的配置信息。
+
+依次执行下面的命令
+
+```shell
+$ sudo mkdir -p /usr/local/etc/openvswitch
+$ sudo ovsdb-tool create /usr/local/etc/openvswitch/conf.db vswitchd/vswitch.ovsschema  2>/dev/null
+```
+
+如果没有报错的话OVS的部署已经成功完成。如果中间步骤出现问题，检查一下单词拼写错误。
+
+**启动OVS**
+
+在启动OVS之前，我们需要先启动`ovsdb-server`配置数据库。注意后面的命令大部分是由两个短“-”组成的。
+
+```shell
+$ sudo ovsdb-server -v --remote=punix:/usr/local/var/run/openvswitch/db.sock --remote=db:Open_vSwitch,Open_vSwitch,manager_options --private-key=db:Open_vSwitch,SSL,private_key --certificate=db:Open_vSwitch,SSL,certificate --bootstrap-ca-cert=db:Open_vSwitch,SSL,ca_cert --pidfile --detach
+```
+
+首次用`ovsdb-tool`创建数据库时需用`ovs-vsctl`命令初始化下数据库。
+
+```shell
+$ sudo ovs-vsctl --no-wait init
+```
+
+启动OVS主进程
+
+```shell
+$ sudo ovs-vswitchd --pidfile --detach
+```
+
+查看OVS进程是否启动。
+
+```shell
+$ sudo ps auxf |grep ovs
+```
+
+![image-20221110162714182](./typora-user-images/image-20221110162714182.png)
+
+通过如下命令查看所安装OVS的版本号。
+
+```shell
+$ sudo ovs-vsctl --version
+```
+
+![image-20221110162928315](./typora-user-images/image-20221110162928315.png)
+
+这样就算安装好OVS了。
+
+#### ps:当后续ovs出现连接不上数据库的情况，可能是数据库没有启动
+
+```shell
+$ sudo !/bin/bash 
+ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock \
+                     --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
+                     --private-key=db:Open_vSwitch,SSL,private_key \
+                     --certificate=db:Open_vSwitch,SSL,certificate \
+                     --bootstrap-ca-cert=db:Open_vSwitch,SSL,ca_cert \
+                     --pidfile --detach
+$ sudo ovs-vsctl --no-wait init
+$ sudo ovs-vswitchd --pidfile --detach
+```
+
+------
+
+### 进行`load_image.sh`里的操作
+
+在`load_image.sh`中他的代码为
+
+```shell
+wget https://sonic-jenkins.westus2.cloudapp.azure.com/job/p4/job/buildimage-p4-all/543/artifact/target/docker-sonic-p4.gz
+sudo docker load < docker-sonic-p4.gz
+```
+
+但是这个`docker-sonic-p4.gz`包docker已经不再支持下载，所以这个`wget`操作是没办法把包下载下来的。
+
+但是其官方仓库（https://hub.docker.com/r/alihasanahmedkhan/docker-sonic-p4）里面还是有这个包的，所以可以直接使用下面命令把包下载下来。
+
+```shell
+$ sudo docker pull alihasanahmedkhan/docker-sonic-p4
+```
+
+同时为了后续方便，顺便下载下来ubuntu的镜像
+
+```shell
+$ sudo docker pull ubuntu:14.04
+```
+
+他这个14.04版本号不用在意，只要你的ubuntu的版本号比这个高就好，直接输入命令即可。
+
+------
+
+### 运行`./start.sh`
+
+这个时候出现一个问题，我们上面下载下来的包名是`alihasanahmedkhan/docker-sonic-p4`，但是`start.sh`文件中使用的是`docker-sonic-p4`，所以我们需要对他进行改名
+
+```shell
+$ sudo docker tag alihasanahmedkhan/docker-sonic-p4 docker-sonic-p4:latest
+```
+
+然后使用`docker image list`命令查看是否改成了想要的image
+
+```shell
+$ sudo docker image list
+```
+
+![image-20221110170448930](./typora-user-images/image-20221110170448930.png)
+
+之后在解压缩后的p4-test文件夹中运行`start.sh`文件
+
+```shell
+$ sudo ./start.sh
+```
+
+运行成功之后输入命令查看容器是否已启动
+
+```shell
+$ sudo docker ps
+```
+
+![image-20221110170849480](./typora-user-images/image-20221110170849480.png)
+
+稍等一段时间之后，运行`test.sh`测试host1与host2的连通性
+
+```shell 
+$ sudo ./test.sh
+```
+
+![image-20221110171417949](./typora-user-images/image-20221110171417949.png)
+
+之后使用`./stop.sh`结束仿真
+
+```shell
+$ sudo ./stop.sh
+```
+
+### **至此sonic安装完成**
+
+
+
+### SONIC-P4配置详情
+
+------
+
+再start.sh中，我们已经将配置文件夹挂载到交换机容器中，位于`/对应的交换机名称文件夹`。最重要的配置`/sonic/scripts/startup.sh`、`/sonic/etc/config_db/vlan_config.json`和`/sonic/etc/quagga/bgpd.conf`。
+
+在`/sonic/scripts/startup.sh`中，启动了所有 SONiC 服务和一个 P4 软件开关。P4软件开关由这一行启动（见supervisord.conf）
+
+```shell
+simple_switch --log-console -i 1@eth1 -i 2@eth2 ...
+```
+
+它将接口 eth1 绑定到 P4 软件交换机的端口 1，eth2 绑定到端口 2，依此类推。这些 ethX 接口通常被称为*前面板接口*，并直接被 P4 交换机用于承载数据平面数据包。然而，SONiC 在另一种类型的接口上运行，称为*主机接口*。*主机接口*用于 SONiC 控制平面，不承载数据平面数据包。*主机接口*命名为 EthernetX 。我们在主机接口上配置对等 IP 和 MTU。SONiC 从*主机接口*读取 IP 和 MTU 等配置，然后使用 SAI 在 P4 软件交换机上配置这些值。*主机接口*之间的映射和交换机端口指定在`/port_config.ini`：
+
+```shell
+# alias         lanes
+Ethernet0       1
+Ethernet1       2
+...
+```
+
+连同 中的 simple_switch 命令`/sonic/scripts/startup.sh`，我们配置了这个映射 Ethernet0 --> lane 1 --> eth1。它本质上是*主机接口*和*前面板接口*之间的映射。
+
+`/sonic/etc/config_db/vlan_config.json`配置本次测试使用的switch vlan接口，使用ConfigDB接口，详见[这里：](https://github.com/Azure/SONiC/wiki/Configuration)
+
+```shell
+{
+    "VLAN": {
+        "Vlan15": {
+            "members": [
+                "Ethernet0"
+            ], 
+            "vlanid": "15"
+        }, 
+        "Vlan10": {
+            "members": [
+                "Ethernet1"
+            ], 
+            "vlanid": "10"
+        }
+    },
+    "VLAN_MEMBER": {
+        "Vlan15|Ethernet0": {
+            "tagging_mode": "untagged"
+        },
+        "Vlan10|Ethernet1": {
+            "tagging_mode": "untagged"
+        }
+    },
+    "VLAN_INTERFACE": {
+        "Vlan15|10.0.0.0/31": {},
+        "Vlan10|192.168.1.1/24": {}
+    }
+}
+```
+
+`/sonic/etc/quagga/bgpd.conf`在交换机上配置 BGP 会话。这是 switch1 的 BGP 配置，它使用对等 IP 10.0.0.0/31 与 switch2 对等，并宣布 192.168.1.0/24。
+
+```shell
+router bgp 10001                        
+  bgp router-id 192.168.1.1             
+  network 192.168.1.0 mask 255.255.255.0
+  neighbor 10.0.0.1 remote-as 10002     
+  neighbor 10.0.0.1 timers 1 3          
+  neighbor 10.0.0.1 send-community      
+  neighbor 10.0.0.1 allowas-in          
+  maximum-paths 64                      
+!                                       
+access-list all permit any
+```
